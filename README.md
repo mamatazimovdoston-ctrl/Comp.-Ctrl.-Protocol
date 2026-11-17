@@ -75,3 +75,17 @@ python tests/create_examples.py
 ```
 
 Ikkinchi buyruq uchun LibreOffice kerak. U haqiqiy shablondan uchta DOCX/PDF juftligi yaratadi. `examples/` ichidagi misollar sun’iy ism va tasvirlardan iborat. TEST_REPORT.md bajarilgan tekshiruvlar va cheklovlarni ko‘rsatadi.
+
+## AI yordamida rasmni qirqish va oldindan ko‘rish
+
+Yangi rasm yuborilganda bot OpenCV ning o‘rgatilgan frontal va profil yuz detektorlari yordamida 17:9 qirqish variantini taklif qiladi. Model fayllari `models/` ichida, serverda mahalliy ishlaydi: foydalanuvchi surati tashqi AI xizmatiga yuborilmaydi, pullik API kaliti kerak emas. Tasvir generatsiya qilinmaydi; yuz, odam yoki buyumlar qayta chizilmaydi.
+
+Bot avval rasmni ko‘rsatadi, keyin foydalanuvchi quyidagilardan birini tanlaydi:
+
+- **✅ Rasmni tasdiqlash** — ko‘rsatilgan variantni hujjatda ishlatish.
+- **🖼 Asl rasmni saqlash** — to‘liq suratni kesmasdan, proporsiyalarini saqlagan holda neytral fonli 17×9 sm maydonga sig‘dirish.
+- **🔄 Boshqa rasm yuborish** — qayta yuklash.
+
+Model barcha yuzlarni, qo‘llarni yoki hujjatlarni aniqlashiga kafolat yo‘q. Algoritm aniqlangan yuzlar atrofida zaxira va pastda yelka/stol uchun joy saqlaydi. Yuz topilmasa, model xato bersa yoki xavfsiz hudud sig‘masa, surat kesilmaydi. Har bir yangi surat foydalanuvchi tomonidan tasdiqlanadi. Yuborilgan preview Telegramda siqilishi mumkin, hujjatda esa sessiyadagi PNG ishlatiladi. Faol sessiyalar deploy vaqtida yo‘qolishi mumkin — `/start` bilan qayta boshlang.
+
+Model manbasi: OpenCV 4.12.0 `data/haarcascades/haarcascade_frontalface_default.xml` va `haarcascade_profileface.xml`. Litsenziya bildirishnomalari XML fayllarning boshida saqlangan.

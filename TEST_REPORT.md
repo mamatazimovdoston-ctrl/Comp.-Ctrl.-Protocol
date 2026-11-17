@@ -21,3 +21,9 @@
 Token berilmagan: haqiqiy Telegram API bilan foto yuklash/hujjat yuborish sinovi va uzluksiz polling tekshirilmadi. Bot handlerlari test dublari bilan tekshirildi. Docker build/Railway deploy bajarilmadi; LibreOffice alohida mahalliy runtime orqali ishga tushirib sinovdan o‘tkazildi. Microsoft Word ilovasida mustaqil vizual taqqoslash bajarilmadi; DOCX tuzilmasi va undan LibreOffice chiqargan PDF tekshirildi. Docker Liberation Serif shriftidan foydalanishi mumkin.
 
 Dastlab GitHub createRepository amali integratsiya ruxsati yetishmagani sababli rad etildi. Keyin foydalanuvchi Comp.-Ctrl.-Protocol repozitoriysini yaratdi va loyiha shu repozitoriyga joylash uchun tayyorlandi. Railway deploy hali bajarilmagan; BOT_TOKEN sozlanishi kerak.
+
+## AI qirqish yangilanishi
+
+Yuzlarni mahalliy o‘rgatilgan OpenCV detektorlari bilan aniqlash, barcha aniqlangan yuzlarni saqlaydigan 17:9 qirqish, yuz topilmaganda/model xatosida aslini sig‘dirish hamda Telegram preview tasdiqlash bosqichi qo‘shildi. Testlar qirqish geometriyasi, keng tarqalgan yuzlarda fallback, xatosiz model yuklanishi, oq tasvirda noto‘g‘ri yuz aniqlanmasligi, ikki variant orasida tanlash, rasmni almashtirish, bekor qilish va yuklangan surat tasdiqsiz qabul qilinmasligini qamraydi. Yuz/hujjatlarning to‘liq saqlanishi preview orqali foydalanuvchi tomonidan tekshiriladi; qo‘l yoki hujjat aniqlovchi alohida model ishlatilmaydi.
+
+Yangilangan to‘liq test natijasi: **19 test o‘tdi** (haqiqiy LibreOffice PDF testlari bilan). OpenCV 4.12.0 detektori OpenCV rasm namunasida haqiqiy yuzni aniqladi. Foydalanuvchining shu chatdagi fotosida server qirqishi alohida sinovdan o‘tkazilmadi; bot preview orqali ko‘rib tasdiqlash mumkin.

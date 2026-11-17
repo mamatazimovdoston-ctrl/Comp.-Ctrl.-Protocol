@@ -8,13 +8,14 @@ from tempfile import TemporaryDirectory
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, FSInputFile
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, FSInputFile, BufferedInputFile
 from config import BOT_TOKEN, TEMPLATE, MAX_IMAGE_BYTES, SESSION_SECONDS, ALLOWED_USER_IDS
 from document_generator import Record, validate_text, parse_date, uz_date, filename, generate_docx, to_pdf
-from image_processor import prepare_image
+from image_processor import prepare_options
 
 NEW='📝 Yangi bayonnoma yaratish'; SAMPLE='📄 Bayonnoma namunasini ko‘rish'; HELP='ℹ️ Yordam'
 KEEP='🖼 Namunadagi rasmni qoldirish'; MAKE='✅ Bayonnomani tayyorlash'; EDIT='✏️ Tahrirlash'; CANCEL='❌ Bekor qilish'
+ACCEPT_IMAGE='✅ Rasmni tasdiqlash'; ORIGINAL_IMAGE='🖼 Asl rasmni saqlash'; REPLACE_IMAGE='🔄 Boshqa rasm yuborish'
 KEYS=['employee','employee_role','date','place','officer_role','officer','image']
 LABELS=['Xodim F.I.Sh.','Xodim lavozimi','Bayonnoma sanasi','Suhbat joyi','Mas’ul lavozimi','Mas’ul F.I.Sh.','Rasm']
 QUESTIONS=[
@@ -30,6 +31,7 @@ def keyboard(*rows):
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=x) for x in row] for row in rows],resize_keyboard=True)
 MENU=keyboard([NEW],[SAMPLE,HELP])
 CONFIRM=keyboard([MAKE],[EDIT,CANCEL])
+IMAGE_MENU=keyboard([ACCEPT_IMAGE],[ORIGINAL_IMAGE],[REPLACE_IMAGE,CANCEL])
 
 @dataclass
 class Session:
@@ -40,6 +42,8 @@ class Session:
     touched: float=field(default_factory=time.monotonic)
     image: bytes | None=None
     busy: bool=False
+    pending_original: bytes | None=None
+    pending_crop: bytes | None=None
 
 sessions: dict[int,Session]={}
 locks: dict[int,asyncio.Lock]={}
@@ -105,6 +109,15 @@ async def handle(m):
     if not s:
         await m.answer('Bayonnoma yaratishni boshlang.',reply_markup=MENU);return
     s.touched=time.monotonic()
+    if s.mode=='image_preview':
+        if text==REPLACE_IMAGE:
+            s.pending_original=None;s.pending_crop=None;s.mode='input'
+            await ask(m,s);return
+        if text not in {ACCEPT_IMAGE,ORIGINAL_IMAGE}:
+            await m.answer('Rasmni tasdiqlang, aslini saqlang yoki boshqa rasm yuboring.',reply_markup=IMAGE_MENU);return
+        s.image=s.pending_crop if text==ACCEPT_IMAGE else s.pending_original
+        s.pending_original=None;s.pending_crop=None;s.editing=False
+        await summary(m,s);return
     if s.mode=='confirm':
         if text==MAKE: await generate_and_send(m,s)
         elif text==EDIT:
@@ -125,7 +138,17 @@ async def handle(m):
                 if attachment.file_size is None or attachment.file_size>MAX_IMAGE_BYTES:
                     raise ValueError('Rasm hajmi 10 MB dan oshmasin.')
                 buf=BytesIO();await m.bot.download(attachment,destination=buf)
-                s.image=await asyncio.to_thread(prepare_image,buf.getvalue())
+                async with workers:
+                    options=await asyncio.to_thread(prepare_options,buf.getvalue())
+                caption=('🤖 Yuzlar aniqlanib, 17:9 ko‘rinishga qirqildi. Yuzlar, qo‘llar va hujjat to‘liq ko‘rinayotganini tekshiring.'
+                         if options.cropped else
+                         '🖼 Xavfsiz qirqish aniqlanmadi. Asl rasm kesilmasdan 17:9 maydonga sig‘dirildi.')
+                await m.answer_photo(BufferedInputFile(options.suggested,filename='Rasm_17x9.png'),
+                                     caption=caption+'\n\nTasdiqlasangiz, shu ko‘rinish bayonnomaga qo‘yiladi. Aslini saqlash — suratni kesmasdan joylashtirish.',
+                                     reply_markup=IMAGE_MENU)
+                s.pending_original=options.original;s.pending_crop=options.suggested
+                s.mode='image_preview'
+                return
         else:
             if not text: raise ValueError('Matn yuboring.')
             key=KEYS[s.step]
