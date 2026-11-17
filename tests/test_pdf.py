@@ -17,7 +17,7 @@ def test_pdf_first_page_and_date_alignment(record,tmp_path):
     assert abs(rects[0].height-9/2.54*72)<0.2
     assert rects[0].y1<page.rect.height-40
     words=page.get_text('words')
-    date=next(w for w in words if w[4]==record.date[-4:])
+    date=next(w for w in words if w[4]==record.date[-4:]+'-yil')
     place=next(w for w in words if w[4]==record.place.split()[0])
     assert abs(date[1]-place[1])<0.5
     assert abs(date[0]-71)<0.5

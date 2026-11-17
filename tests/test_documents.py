@@ -18,8 +18,8 @@ def raw_image(size=(500,900)):
     b=BytesIO();Image.new('RGB',size,'red').save(b,'PNG');return b.getvalue()
 
 def test_dates():
-    for month in range(1,13): assert uz_date(f'01.{month:02}.2026').startswith('2026 yil 1 ')
-    assert uz_date('17.11.2026')=='2026 yil 17 noyabr'
+    for month in range(1,13): assert uz_date(f'01.{month:02}.2026').startswith('2026-yil 1-')
+    assert uz_date('17.11.2026')=='2026-yil 17-noyabr'
     assert parse_date('29.02.2024').day==29
     for bad in ['29.02.2026','31.04.2026','1.2.2026','<date>']:
         with pytest.raises(ValueError): parse_date(bad)
@@ -60,7 +60,7 @@ def test_immutable_legal_text_and_fields(tmp_path,record):
     assert 'S.Karimov' in combined and record.officer_role in combined
     assert len(result.tables)==3
     date=result.tables[0]
-    assert date.cell(0,0).text=='2026 yil 17 noyabr'
+    assert date.cell(0,0).text=='2026-yil 17-noyabr'
     assert date.cell(0,1).text==record.place
     assert int(date.cell(0,0).paragraphs[0].alignment)==0
     assert int(date.cell(0,1).paragraphs[0].alignment)==2

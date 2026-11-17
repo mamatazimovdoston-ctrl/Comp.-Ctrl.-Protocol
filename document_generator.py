@@ -31,7 +31,7 @@ def parse_date(value):
 
 def uz_date(value):
     d = parse_date(value)
-    return f'{d.year} yil {d.day} {MONTHS[d.month-1]}'
+    return f'{d.year}-yil {d.day}-{MONTHS[d.month-1]}'
 
 def validate_text(value, kind):
     if not isinstance(value, str) or any(ord(c) < 32 for c in value):
