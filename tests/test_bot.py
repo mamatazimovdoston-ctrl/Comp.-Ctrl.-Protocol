@@ -10,14 +10,16 @@ def test_full_conversation_edit_cancel():
     async def run():
         bot.sessions.clear()
         uid=1
-        for text in [bot.NEW,'Karimov Sardor Olim o‘g‘li','Sud katta konsultanti','31.02.2026']:
+        for text in [bot.NEW,'🇺🇿 Lotin yozuvi','Karimov Sardor Olim o‘g‘li','Sud katta konsultanti','31.02.2026']:
             await bot.handle(message(text,uid))
         assert bot.sessions[uid].step==2
         for text in ['17.11.2026','Samarqand shahri','Komplayens bosh inspektori','Rasulova Malika Olim qizi',bot.KEEP]:
             await bot.handle(message(text,uid))
-        s=bot.sessions[uid];assert s.mode=='confirm' and s.image is None
+        s=bot.sessions[uid];assert s.mode=='review' and s.image is None
         await bot.handle(message(bot.EDIT,uid));await bot.handle(message('Suhbat joyi',uid));await bot.handle(message('Urgut tumani',uid))
-        assert s.mode=='confirm' and s.values['place']=='Urgut tumani'
+        assert s.mode=='review' and s.values['place']=='Urgut tumani'
+        await bot.handle(message(bot.TEXT_OK,uid))
+        assert s.mode=='confirm' and s.text_confirmed
         await bot.handle(message(bot.NEW,2))
         assert bot.sessions[2].values=={} and bot.sessions[1].values['place']=='Urgut tumani'
         await bot.handle(message(bot.CANCEL,uid));assert uid not in bot.sessions

@@ -14,6 +14,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 from config import TEMPLATE, SOFFICE
+from transliteration import convert, SCRIPTS
 
 MONTHS = 'yanvar fevral mart aprel may iyun iyul avgust sentabr oktabr noyabr dekabr'.split()
 OLD_NAME = 'Anvarov Anvar Anvar o‘g‘li'
@@ -44,9 +45,10 @@ def validate_text(value, kind):
         raise ValueError('Kamida familiya va ismni kiriting.')
     return value
 
-def initials(name):
-    surname, given, *_ = name.split()
-    return f'{given[0].upper()}.{surname}'
+def initials(name,script='latin'):
+    surname, given, *_ = convert(name,script).split()
+    initial=given[:2] if script=='latin' and given[:2].lower() in {'sh','ch','o‘','g‘'} else given[0]
+    return f'{initial[:1].upper()+initial[1:]}.{surname}'
 
 @dataclass(frozen=True)
 class Record:
@@ -56,8 +58,10 @@ class Record:
     place: str
     officer_role: str
     officer: str
+    script: str = 'latin'
 
     def validate(self):
+        if self.script not in SCRIPTS: raise ValueError('Yozuv turi noto‘g‘ri.')
         parse_date(self.date)
         for key in ('employee','employee_role','place','officer_role','officer'):
             if validate_text(getattr(self,key),key) != getattr(self,key):
@@ -115,30 +119,61 @@ def pair_table(doc, anchor, left, right, date=False):
     anchor._p.getparent().remove(anchor._p)
     return table
 
+
+def convert_paragraph(paragraph, script):
+    nodes=paragraph._p.xpath('.//w:t')
+    if not nodes:return
+    text=''.join(n.text or '' for n in nodes)
+    converted=convert(text,script)
+    if converted==text:return
+    # Sequence alignment preserves unchanged letters in their original formatting;
+    # replacements spanning runs inherit the first source run's properties.
+    from difflib import SequenceMatcher
+    owners=[]
+    for idx,n in enumerate(nodes):owners.extend([idx]*len(n.text or ''))
+    output=['']*len(nodes)
+    for tag,a,b,c,d in SequenceMatcher(None,text,converted,autojunk=False).get_opcodes():
+        if tag=='equal':
+            for offset,char in enumerate(converted[c:d]):output[owners[a+offset]]+=char
+        elif tag in {'replace','insert'}:
+            owner=owners[min(a,len(owners)-1)] if owners else 0
+            output[owner]+=converted[c:d]
+    for node,value in zip(nodes,output):
+        node.text=value
+        node.set('{http://www.w3.org/XML/1998/namespace}space','preserve')
+
 def generate_docx(record: Record, destination: Path, image: bytes | None=None):
     record.validate();doc=Document(TEMPLATE);p=list(doc.paragraphs)
     if len(p)!=30 or 'B A Y O N N O M A S I'!=p[2].text or len(doc.inline_shapes)!=1:
         raise ValueError('Asl shablon tuzilmasi mos kelmadi.')
+    if record.script=='cyrillic':
+        # Cyrillic glyphs require more lines at the original 14 pt font.
+        # Use a compact line height, keeping font size, margins and text intact.
+        for paragraph in p:
+            if paragraph.text:
+                paragraph.paragraph_format.line_spacing_rule=WD_LINE_SPACING.EXACTLY
+                paragraph.paragraph_format.line_spacing=Pt(15.5)
     replace_span(p[0],OLD_ROLE,record.employee_role)
     replace_span(p[0],OLD_NAME,record.employee)
     replace_span(p[16],OLD_OFFICER,record.officer_role)
     replace_span(p[16],SHORT_ROLE,record.employee_role)
     replace_span(p[16],OLD_NAME,record.employee)
-    replace_span(p[17],'A.Anvarov',initials(record.employee))
+    replace_span(p[17],'A.Anvarov',initials(record.employee,record.script))
     # Extra title/place lines must not push the picture off page one.
     # Reclaim only existing empty spacer paragraphs when input is lengthy.
-    if len(record.employee_role + record.employee) > 165 or len(record.place) > 42:
+    if record.script=='cyrillic' or len(record.employee_role + record.employee) > 165 or len(record.place) > 42:
         for idx in (1,3,5,12):
             p[idx].paragraph_format.line_spacing_rule=WD_LINE_SPACING.EXACTLY
             p[idx].paragraph_format.line_spacing=Pt(0.5)
             p[idx].paragraph_format.space_before=Pt(0)
             p[idx].paragraph_format.space_after=Pt(0)
     pair_table(doc,p[4],uz_date(record.date),record.place,date=True)
+    if record.script=='cyrillic':p[14].paragraph_format.page_break_before=True
     p[19].paragraph_format.keep_with_next=True
     p[20].paragraph_format.keep_with_next=True
-    pair_table(doc,p[21],record.officer_role,initials(record.officer))
+    pair_table(doc,p[21],record.officer_role,initials(record.officer,record.script))
     p[22]._p.getparent().remove(p[22]._p)
-    pair_table(doc,p[28],record.employee_role,initials(record.employee))
+    pair_table(doc,p[28],record.employee_role,initials(record.employee,record.script))
     p[29]._p.getparent().remove(p[29]._p)
     shape=doc.inline_shapes[0]
     shape.width=Cm(17);shape.height=Cm(9)
@@ -152,6 +187,10 @@ def generate_docx(record: Record, destination: Path, image: bytes | None=None):
         shape._inline.graphic.graphicData.pic.blipFill.blip.embed=rid
         if old_rid != rid and not doc.part.element.xpath('.//*[@r:embed="%s"]' % old_rid):
             doc.part.drop_rel(old_rid)
+    # Whole paragraphs are processed across Word runs so split digraphs survive.
+    # Map each converted character back to the originating run, retaining style/drawings.
+    for paragraph in list(doc.paragraphs)+[p for table in doc.tables for row in table.rows for cell in row.cells for p in cell.paragraphs]:
+        convert_paragraph(paragraph,record.script)
     destination=Path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
     doc.save(destination)
     return destination

@@ -12,10 +12,14 @@ from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, FSInputF
 from config import BOT_TOKEN, TEMPLATE, MAX_IMAGE_BYTES, SESSION_SECONDS, ALLOWED_USER_IDS
 from document_generator import Record, validate_text, parse_date, uz_date, filename, generate_docx, to_pdf
 from image_processor import prepare_options
+from transliteration import convert, SCRIPTS
 
 NEW='📝 Yangi bayonnoma yaratish'; SAMPLE='📄 Bayonnoma namunasini ko‘rish'; HELP='ℹ️ Yordam'
 KEEP='🖼 Namunadagi rasmni qoldirish'; MAKE='✅ Bayonnomani tayyorlash'; EDIT='✏️ Tahrirlash'; CANCEL='❌ Bekor qilish'
 ACCEPT_IMAGE='✅ Rasmni tasdiqlash'; ORIGINAL_IMAGE='🖼 Asl rasmni saqlash'; REPLACE_IMAGE='🔄 Boshqa rasm yuborish'
+SCRIPT_BUTTONS={'🇺🇿 Lotin yozuvi':'latin','🔤 Kirill yozuvi':'cyrillic','✨ Yangi lotin yozuvi':'new_latin'}
+SCRIPT_EDIT='🔤 Yozuv turi'
+TEXT_OK='✅ Matnni tasdiqlash'
 KEYS=['employee','employee_role','date','place','officer_role','officer','image']
 LABELS=['Xodim F.I.Sh.','Xodim lavozimi','Bayonnoma sanasi','Suhbat joyi','Mas’ul lavozimi','Mas’ul F.I.Sh.','Rasm']
 QUESTIONS=[
@@ -32,12 +36,16 @@ def keyboard(*rows):
 MENU=keyboard([NEW],[SAMPLE,HELP])
 CONFIRM=keyboard([MAKE],[EDIT,CANCEL])
 IMAGE_MENU=keyboard([ACCEPT_IMAGE],[ORIGINAL_IMAGE],[REPLACE_IMAGE,CANCEL])
+SCRIPT_MENU=keyboard(*[[x] for x in SCRIPT_BUTTONS],[CANCEL])
+TEXT_MENU=keyboard([TEXT_OK],[EDIT,CANCEL])
 
 @dataclass
 class Session:
     values: dict=field(default_factory=dict)
     step: int=0
     mode: str='input'
+    script: str='latin'
+    text_confirmed: bool=False
     editing: bool=False
     touched: float=field(default_factory=time.monotonic)
     image: bytes | None=None
@@ -54,15 +62,16 @@ async def ask(m,s):
     await m.answer(QUESTIONS[s.step],reply_markup=keyboard([KEEP],[CANCEL]) if s.step==6 else keyboard([CANCEL]))
 
 async def summary(m,s):
-    v=s.values;s.mode='confirm'
-    await m.answer(f'📋 Bayonnoma ma’lumotlari:\n\nSuhbat o‘tkazilgan xodim: {v["employee"]}\n\nLavozimi: {v["employee_role"]}\n\nBayonnoma sanasi: {uz_date(v["date"])}\n\nSuhbat o‘tkazilgan joy: {v["place"]}\n\nSuhbat o‘tkazgan xodim: {v["officer"]}\n\nLavozimi: {v["officer_role"]}\n\nRasm: {"yuborilgan" if s.image else "namunadagi rasm"}\n\nMa’lumotlarni tasdiqlaysizmi?',reply_markup=CONFIRM)
+    v={k:convert(value,s.script) if k!='date' else value for k,value in s.values.items()};s.mode='review'
+    s.text_confirmed=False
+    await m.answer(f'📋 Bayonnoma ma’lumotlari:\n\nYozuv: {SCRIPTS[s.script]}\n\nSuhbat o‘tkazilgan xodim: {v["employee"]}\n\nLavozimi: {v["employee_role"]}\n\nBayonnoma sanasi: {convert(uz_date(v["date"]),s.script)}\n\nSuhbat o‘tkazilgan joy: {v["place"]}\n\nSuhbat o‘tkazgan xodim: {v["officer"]}\n\nLavozimi: {v["officer_role"]}\n\nRasm: {"yuborilgan" if s.image else "namunadagi rasm"}\n\nIsm va lavozimlarni tekshiring. Harflar va apostroflar mahalliy transliteratsiya bilan to‘g‘rilandi. Matnni tasdiqlaysizmi?',reply_markup=TEXT_MENU)
 
 async def generate_and_send(m,s):
     s.busy=True
     try:
         await m.answer('⏳ Word va PDF hujjatlar tayyorlanmoqda…')
         async with workers:
-            record=Record(**s.values)
+            record=Record(**s.values,script=s.script)
             with TemporaryDirectory(prefix='bayonnoma-') as temp:
                 target=Path(temp)/(filename(record)+'.docx')
                 await asyncio.to_thread(generate_docx,record,target,s.image)
@@ -105,10 +114,28 @@ async def handle(m):
     if text==SAMPLE:
         await m.answer_document(FSInputFile(TEMPLATE),caption='Asl, o‘zgartirilmagan bayonnoma namunasi.');return
     if text==NEW:
-        s=Session();sessions[uid]=s;await ask(m,s);return
+        s=Session(mode='script');sessions[uid]=s
+        await m.answer('Bayonnoma qaysi yozuvda tayyorlansin?',reply_markup=SCRIPT_MENU);return
     if not s:
         await m.answer('Bayonnoma yaratishni boshlang.',reply_markup=MENU);return
     s.touched=time.monotonic()
+    if s.mode=='script':
+        if text not in SCRIPT_BUTTONS:
+            await m.answer('Yozuv turini tugma orqali tanlang.',reply_markup=SCRIPT_MENU);return
+        s.script=SCRIPT_BUTTONS[text]
+        if s.editing:
+            s.editing=False;await summary(m,s)
+        else:
+            s.mode='input';await ask(m,s)
+        return
+    if s.mode=='review':
+        if text==TEXT_OK:
+            s.text_confirmed=True;s.mode='confirm'
+            await m.answer('✅ Matn tasdiqlandi. Word va PDF bayonnomani tayyorlash uchun tugmani bosing.',reply_markup=CONFIRM)
+        elif text==EDIT:
+            s.mode='choose';await m.answer('Qaysi maydonni o‘zgartirasiz?',reply_markup=keyboard(*[[x] for x in LABELS],[SCRIPT_EDIT],[CANCEL]))
+        else:await m.answer('Matnni tasdiqlang yoki tahrirlang.',reply_markup=TEXT_MENU)
+        return
     if s.mode=='image_preview':
         if text==REPLACE_IMAGE:
             s.pending_original=None;s.pending_crop=None;s.mode='input'
@@ -121,10 +148,12 @@ async def handle(m):
     if s.mode=='confirm':
         if text==MAKE: await generate_and_send(m,s)
         elif text==EDIT:
-            s.mode='choose';await m.answer('Qaysi maydonni o‘zgartirasiz?',reply_markup=keyboard(*[[x] for x in LABELS],[CANCEL]))
+            s.mode='choose';await m.answer('Qaysi maydonni o‘zgartirasiz?',reply_markup=keyboard(*[[x] for x in LABELS],[SCRIPT_EDIT],[CANCEL]))
         else: await m.answer('Tasdiqlash yoki tahrirlash tugmasini bosing.',reply_markup=CONFIRM)
         return
     if s.mode=='choose':
+        if text==SCRIPT_EDIT:
+            s.editing=True;s.mode='script';await m.answer('Yozuv turini tanlang.',reply_markup=SCRIPT_MENU);return
         if text not in LABELS:
             await m.answer('Maydonni tugma orqali tanlang.');return
         s.step=LABELS.index(text);s.editing=True;s.mode='input';await ask(m,s);return

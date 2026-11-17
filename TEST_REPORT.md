@@ -27,3 +27,13 @@ Dastlab GitHub createRepository amali integratsiya ruxsati yetishmagani sababli 
 Yuzlarni mahalliy o‘rgatilgan OpenCV detektorlari bilan aniqlash, barcha aniqlangan yuzlarni saqlaydigan 17:9 qirqish, yuz topilmaganda/model xatosida aslini sig‘dirish hamda Telegram preview tasdiqlash bosqichi qo‘shildi. Testlar qirqish geometriyasi, keng tarqalgan yuzlarda fallback, xatosiz model yuklanishi, oq tasvirda noto‘g‘ri yuz aniqlanmasligi, ikki variant orasida tanlash, rasmni almashtirish, bekor qilish va yuklangan surat tasdiqsiz qabul qilinmasligini qamraydi. Yuz/hujjatlarning to‘liq saqlanishi preview orqali foydalanuvchi tomonidan tekshiriladi; qo‘l yoki hujjat aniqlovchi alohida model ishlatilmaydi.
 
 Yangilangan to‘liq test natijasi: **19 test o‘tdi** (haqiqiy LibreOffice PDF testlari bilan). OpenCV 4.12.0 detektori OpenCV rasm namunasida haqiqiy yuzni aniqladi. Foydalanuvchining shu chatdagi fotosida server qirqishi alohida sinovdan o‘tkazilmadi; bot preview orqali ko‘rib tasdiqlash mumkin.
+
+## Uch yozuv va apostroflar yangilanishi
+
+`transliteration.py` mahalliy o‘girish qoidalari qo‘shildi. Kirill, amaldagi lotin va ŏ/ğ/ş/ç varianti; o‘/g‘ va tutuq belgisini normalizatsiya qilish; ъ/ь qatnashadigan ayrim so‘zlar, oylar va sudya/obyekt/subyekt imlosi; tanlangan alifboga mos F.I.Sh. qisqartmalari tekshiriladi. Tasdiqlashdan oldin yozuvni o‘zgartirish va matnni qayta tekshirish mumkin.
+
+9 ta haqiqiy LibreOffice sinovi: uchta yozuv × uchta sinov yozuvi. Har birida sana chapda, joy o‘ngda; rasm 17×9 sm va birinchi sahifada; har biri 2 sahifa. Uch yozuvda alohida DOCX/PDF namunalari `examples/Yozuv_*.docx/pdf` ichida. PDFlar rastrga aylantirilib vizual ko‘rildi; kirill uchun ixcham qator oralig‘i va rasmdan keyin sahifa uzilishi moslandi. Huquqiy matn mazmuni tarjima qilinmaydi — faqat yozuvi o‘giriladi.
+
+Tilmoch.ai saytining ochiq sahifalari va plagin katalogi tekshirildi. Hujjatlashtirilgan ochiq transliteratsiya API shartnomasi yoki tayyor plagin topilmadi. Shu sababli tashqi Tilmoch API integratsiyasi bajarilmagan; uni ulangan deb ko‘rsatadigan xabar yo‘q. Barcha o‘girishlar lokal. Bu to‘liq lug‘atga ega imlo tekshirgich emas: foydalanuvchi ismlar va noodatiy so‘zlarni tasdiqlashi/tahrirlashi kerak.
+
+To‘liq yangilangan natija: **37 test o‘tdi**, jumladan 9 ta haqiqiy PDF konversiya testi.

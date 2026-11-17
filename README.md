@@ -89,3 +89,13 @@ Bot avval rasmni ko‘rsatadi, keyin foydalanuvchi quyidagilardan birini tanlayd
 Model barcha yuzlarni, qo‘llarni yoki hujjatlarni aniqlashiga kafolat yo‘q. Algoritm aniqlangan yuzlar atrofida zaxira va pastda yelka/stol uchun joy saqlaydi. Yuz topilmasa, model xato bersa yoki xavfsiz hudud sig‘masa, surat kesilmaydi. Har bir yangi surat foydalanuvchi tomonidan tasdiqlanadi. Yuborilgan preview Telegramda siqilishi mumkin, hujjatda esa sessiyadagi PNG ishlatiladi. Faol sessiyalar deploy vaqtida yo‘qolishi mumkin — `/start` bilan qayta boshlang.
 
 Model manbasi: OpenCV 4.12.0 `data/haarcascades/haarcascade_frontalface_default.xml` va `haarcascade_profileface.xml`. Litsenziya bildirishnomalari XML fayllarning boshida saqlangan.
+
+## Uch xil yozuv va matnni tasdiqlash
+
+Yangi bayonnoma yaratishda avval **Lotin**, **Kirill** yoki foydalanuvchi tasdiqlagan **Yangi lotin (ŏ, ğ, ş, ç)** tanlanadi. Yangi lotin alohida foydalanuvchi varianti bo‘lib, amaldagi rasmiy alifbo sifatida da’vo qilinmaydi.
+
+`transliteration.py` apostroflarni birxillashtiradi: o‘/g‘ uchun `‘`, tutuq belgisi uchun `ʼ`; oddiy klaviatura apostroflari va o-/g- birikmalari ham tuzatiladi. Кириллдаги `ў`, `ғ`, `ъ`, `ь`, `е` kontekstga muvofiq o‘giriladi; obyekt/subyekt, sudya va oy nomlari uchun maxsus imlo qoidalari bor. Bu deterministik transliteratsiya: to‘liq imlo tekshirgich yoki tarjimon emas. Ismlar, qo‘shma so‘zlar, ruscha so‘zlar va sh/ch/ts/ye kabi birikmalar har doim avtomatik to‘g‘ri talqin qilinmasligi mumkin. Foydalanuvchi matnni ko‘rib **Matnni tasdiqlash** tugmasini bosadi; **Tahrirlash → Yozuv turi** orqali yozuvni almashtiradi.
+
+Tanlangan yozuv butun DOCX matniga, jumladan huquqiy xatboshilar, sana, joy, sarlavha va imzolarga qo‘llanadi. Asl shablon o‘zgarmaydi. Word run formatlari va rasm tugunlari saqlanadi. Kirill matni kengroq bo‘lgani uchun 14 pt shriftni saqlagan holda qator balandligi 15.5 pt qilinadi va bo‘sh ajratgichlar qisqartiriladi. Rasm birinchi sahifada ekanligi PDF konversiyasida tekshiriladi.
+
+**Tilmoch.ai holati:** sayt tekshirildi, tayyor ChatGPT plagini va foydalanishga ochiq, hujjatlashtirilgan transliteratsiya API shartnomasi topilmadi. Hozir Tilmoch.ai ulangan emas va unga foydalanuvchi ma’lumotlari yuborilmaydi. Yuqoridagi funksiyalar serverda mahalliy ishlaydi. Haqiqiy Tilmoch integratsiyasi uchun provayderning rasmiy API hujjatlari va tegishli xizmat ruxsati talab etiladi; noma’lum endpoint yoki taxminiy API so‘rovi ishlatilmagan.

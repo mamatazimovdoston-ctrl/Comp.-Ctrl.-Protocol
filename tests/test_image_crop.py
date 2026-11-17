@@ -48,7 +48,7 @@ def test_preview_choices_and_replacement():
             s=bot.Session(values=values.copy(),step=6,mode='image_preview',pending_original=b'original',pending_crop=b'crop')
             bot.sessions[1]=s
             await bot.handle(message(choice))
-            assert s.image==expected and s.mode=='confirm'
+            assert s.image==expected and s.mode=='review'
             assert s.pending_original is None and s.pending_crop is None
         s=bot.Session(step=6,mode='image_preview',pending_original=b'original',pending_crop=b'crop')
         bot.sessions[1]=s

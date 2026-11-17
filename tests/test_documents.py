@@ -7,6 +7,7 @@ from PIL import Image
 from docx import Document
 from docx.oxml.ns import qn
 from config import TEMPLATE
+from transliteration import convert
 from document_generator import Record, generate_docx, initials, parse_date, uz_date, replace_span
 from image_processor import prepare_image
 
@@ -53,7 +54,7 @@ def test_immutable_legal_text_and_fields(tmp_path,record):
     result=Document(out)
     texts=[p.text for p in result.paragraphs]
     for idx in [1,2,3,5,6,7,8,9,10,11,12,14,15,18,19,20,23,24,25,26,27]:
-        assert source.paragraphs[idx].text in texts
+        assert convert(source.paragraphs[idx].text) in texts
     assert record.employee in texts[0] and record.employee_role in texts[0]
     combined='\n'.join(texts)
     assert 'Anvarov' not in combined and 'A.Anvarov' not in combined
