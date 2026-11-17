@@ -37,3 +37,7 @@ Yangilangan to‘liq test natijasi: **19 test o‘tdi** (haqiqiy LibreOffice PDF
 Tilmoch.ai saytining ochiq sahifalari va plagin katalogi tekshirildi. Hujjatlashtirilgan ochiq transliteratsiya API shartnomasi yoki tayyor plagin topilmadi. Shu sababli tashqi Tilmoch API integratsiyasi bajarilmagan; uni ulangan deb ko‘rsatadigan xabar yo‘q. Barcha o‘girishlar lokal. Bu to‘liq lug‘atga ega imlo tekshirgich emas: foydalanuvchi ismlar va noodatiy so‘zlarni tasdiqlashi/tahrirlashi kerak.
 
 To‘liq yangilangan natija: **37 test o‘tdi**, jumladan 9 ta haqiqiy PDF konversiya testi.
+
+## Tayyor hujjatni qayta o‘girish
+
+To‘liq sinov natijasi: **43 test o‘tdi**. Qo‘shimcha testlar: fayllar yuborilgandan keyingina bayonnomani saqlash; tasdiqlash xabaridagi inline tugmalarni aynan o‘sha hujjatga bog‘lash; uch yozuvga qayta yaratishda asl ma’lumot va tanlangan rasmni ishlatish; boshqa faol draft va boshqa bayonnomani o‘zgartirmaslik; egasi bo‘lmagan foydalanuvchini rad etish; eskirgan/o‘chirilgan tugmalar; band holat; 30 daqiqalik tugash va beshta hujjat limiti; xatodan keyin qayta urinish; yozuv qo‘shimchali fayl nomlari; yuborilgandan keyin vaqtinchalik fayllarni tozalash. Handler sinovlari Telegram test dublari bilan, hujjat/PDF sinovlari haqiqiy LibreOffice orqali bajarilgan.

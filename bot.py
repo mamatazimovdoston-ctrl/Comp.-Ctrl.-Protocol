@@ -1,14 +1,15 @@
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+import secrets
+from dataclasses import dataclass, field, replace
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, FSInputFile, BufferedInputFile
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from config import BOT_TOKEN, TEMPLATE, MAX_IMAGE_BYTES, SESSION_SECONDS, ALLOWED_USER_IDS
 from document_generator import Record, validate_text, parse_date, uz_date, filename, generate_docx, to_pdf
 from image_processor import prepare_options
@@ -53,6 +54,50 @@ class Session:
     pending_original: bytes | None=None
     pending_crop: bytes | None=None
 
+@dataclass
+class SavedDocument:
+    owner: int
+    chat_id: int
+    record: Record
+    image: bytes | None
+    expires: float
+    busy: bool=False
+
+saved_documents: dict[str,SavedDocument]={}
+SCRIPT_SUFFIX={'latin':'Lotin','cyrillic':'Kirill','new_latin':'Yangi_lotin'}
+
+def document_buttons(token):
+    labels=[('🔤 Kirillga o‘girish','cyrillic'),('🇺🇿 Lotinga o‘girish','latin'),('✨ Yangi lotinga o‘girish','new_latin'),('🗑 Saqlangan ma’lumotni o‘chirish','delete')]
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label,callback_data=f'doc:{token}:{action}')] for label,action in labels])
+
+def purge_documents(now=None):
+    now=time.monotonic() if now is None else now
+    for token,item in list(saved_documents.items()):
+        if not item.busy and item.expires<=now:saved_documents.pop(token,None)
+
+def save_document(owner,chat_id,record,image):
+    purge_documents()
+    owned=[key for key,item in saved_documents.items() if item.owner==owner and not item.busy]
+    while len(owned)>=5:saved_documents.pop(owned.pop(0),None)
+    token=secrets.token_hex(6)
+    saved_documents[token]=SavedDocument(owner,chat_id,record,image,time.monotonic()+SESSION_SECONDS)
+    return token
+
+async def send_document_pair(m,record,image,with_suffix=False):
+    async with workers:
+        with TemporaryDirectory(prefix='bayonnoma-') as temp:
+            stem=filename(record)+(('_'+SCRIPT_SUFFIX[record.script]) if with_suffix else '')
+            target=Path(temp)/(stem+'.docx')
+            await asyncio.to_thread(generate_docx,record,target,image)
+            try:
+                pdf=await asyncio.to_thread(to_pdf,target)
+            except ValueError:raise
+            except Exception:
+                await m.answer_document(FSInputFile(target),caption='Word tayyor. PDF yaratishda xato yuz berdi; qayta urinish mumkin.')
+                raise
+            await m.answer_document(FSInputFile(target),caption='Tahrirlash va chop etish uchun Word')
+            await m.answer_document(FSInputFile(pdf),caption='Chop etish uchun PDF')
+
 sessions: dict[int,Session]={}
 locks: dict[int,asyncio.Lock]={}
 workers=asyncio.Semaphore(2)
@@ -70,23 +115,13 @@ async def generate_and_send(m,s):
     s.busy=True
     try:
         await m.answer('⏳ Word va PDF hujjatlar tayyorlanmoqda…')
-        async with workers:
-            record=Record(**s.values,script=s.script)
-            with TemporaryDirectory(prefix='bayonnoma-') as temp:
-                target=Path(temp)/(filename(record)+'.docx')
-                await asyncio.to_thread(generate_docx,record,target,s.image)
-                try:
-                    pdf=await asyncio.to_thread(to_pdf,target)
-                except ValueError:
-                    raise
-                except Exception:
-                    await m.answer_document(FSInputFile(target),caption='Word tayyor. PDF yaratishda xato yuz berdi; qayta urinish mumkin.')
-                    raise
-                await m.answer_document(FSInputFile(target),caption='Tahrirlash va chop etish uchun Word')
-                await m.answer_document(FSInputFile(pdf),caption='Chop etish uchun PDF')
+        record=Record(**s.values,script=s.script)
+        await send_document_pair(m,record,s.image)
+        token=save_document(m.from_user.id,m.chat.id,record,s.image)
         sessions.pop(m.from_user.id,None)
         s.image=None;s.values.clear()
-        await m.answer('✅ Bayonnoma muvaffaqiyatli tayyorlandi!\n\nWord va PDF shaklidagi hujjatlar quyida yuborildi.',reply_markup=MENU)
+        await m.answer(f'✅ Bayonnoma tayyor!\nJoriy yozuv: {SCRIPTS[record.script]}\n\nShu bayonnomani boshqa yozuvda olish uchun tanlang. Ma’lumot va rasm 30 daqiqa saqlanadi (oxirgi 5 ta bayonnoma).',reply_markup=document_buttons(token))
+        await m.answer('Yangi bayonnoma yaratishingiz yoki yuqoridagi tugmalardan foydalanishingiz mumkin.',reply_markup=MENU)
     except ValueError as exc:
         await m.answer(str(exc),reply_markup=CONFIRM)
     except Exception as exc:
@@ -205,10 +240,54 @@ async def route(m: Message):
     async with lock:
         await handle(m)
 
+@dp.callback_query(F.data.startswith('doc:'))
+async def document_action(q: CallbackQuery):
+    parts=(q.data or '').split(':')
+    if len(parts)!=3 or parts[2] not in {*SCRIPTS,'delete'}:
+        await q.answer('Tugma noto‘g‘ri.',show_alert=True);return
+    _,token,action=parts
+    item=saved_documents.get(token)
+    if not item or item.expires<=time.monotonic():
+        if item and not item.busy:saved_documents.pop(token,None)
+        await q.answer('Saqlash muddati tugagan yoki ma’lumot o‘chirilgan. Yangi bayonnoma yarating.',show_alert=True);return
+    if not q.message or q.message.chat.type!=ChatType.PRIVATE or item.owner!=q.from_user.id or item.chat_id!=q.message.chat.id:
+        await q.answer('Bu bayonnomadan foydalanishga ruxsat yo‘q.',show_alert=True);return
+    if ALLOWED_USER_IDS and q.from_user.id not in ALLOWED_USER_IDS:
+        await q.answer('Ruxsat berilmagan.',show_alert=True);return
+    lock=locks.setdefault(q.from_user.id,asyncio.Lock())
+    if lock.locked() or item.busy:
+        await q.answer('Oldingi so‘rov bajarilmoqda. Iltimos, kuting.',show_alert=True);return
+    async with lock:
+        if action=='delete':
+            saved_documents.pop(token,None)
+            await q.answer('Saqlangan ma’lumot o‘chirildi.')
+            await q.message.edit_reply_markup(reply_markup=None)
+            await q.message.answer('🗑 Shu bayonnomaning serverdagi ma’lumoti va rasmi o‘chirildi. Telegramga yuborilgan fayllar chatda qoladi.')
+            return
+        item.busy=True
+        try:
+            await q.answer('Bayonnoma qayta tayyorlanmoqda…')
+            record=replace(item.record,script=action)
+            await send_document_pair(q.message,record,item.image,with_suffix=True)
+            if item.expires>time.monotonic():
+                await q.message.answer(f'✅ Bayonnoma qayta tayyorlandi.\nJoriy yozuv: {SCRIPTS[action]}',reply_markup=document_buttons(token))
+            else:
+                saved_documents.pop(token,None)
+                await q.message.answer('✅ Bayonnoma qayta tayyorlandi. Saqlash muddati tugagani uchun serverdagi ma’lumot tozalandi.')
+        except ValueError as exc:
+            await q.message.answer(str(exc))
+        except Exception as exc:
+            logging.error('Script conversion/send failure: %s',type(exc).__name__)
+            await q.message.answer('Qayta tayyorlash yoki yuborishda xato yuz berdi. Tugmani qayta bosib urinib ko‘ring.')
+        finally:
+            item.busy=False
+            purge_documents()
+
 async def expire_sessions():
     while True:
         await asyncio.sleep(30)
         now=time.monotonic()
+        purge_documents(now)
         for uid,s in list(sessions.items()):
             if not s.busy and now-s.touched>SESSION_SECONDS and not locks.get(uid,asyncio.Lock()).locked():
                 sessions.pop(uid,None)
@@ -224,7 +303,7 @@ async def main():
             await bot.delete_webhook(drop_pending_updates=True)
             await dp.start_polling(bot)
     finally:
-        cleanup.cancel();sessions.clear()
+        cleanup.cancel();sessions.clear();saved_documents.clear()
         try: await cleanup
         except asyncio.CancelledError: pass
 
