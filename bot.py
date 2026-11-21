@@ -10,10 +10,11 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from config import BOT_TOKEN, TEMPLATE, MAX_IMAGE_BYTES, SESSION_SECONDS, ALLOWED_USER_IDS
+from config import BOT_TOKEN, TEMPLATE, MAX_IMAGE_BYTES, SESSION_SECONDS, ALLOWED_USER_IDS, SOFFICE
 from document_generator import Record, validate_text, parse_date, uz_date, filename, generate_docx, to_pdf
 from image_processor import prepare_options
 from transliteration import convert, SCRIPTS
+from pdf_tools import BACK, ENTRY, MIB, PdfTools, positive_env
 
 NEW='📝 Yangi bayonnoma yaratish'; SAMPLE='📄 Bayonnoma namunasini ko‘rish'; HELP='ℹ️ Yordam'
 KEEP='🖼 Namunadagi rasmni qoldirish'; MAKE='✅ Bayonnomani tayyorlash'; EDIT='✏️ Tahrirlash'; CANCEL='❌ Bekor qilish'
@@ -34,7 +35,7 @@ QUESTIONS=[
 
 def keyboard(*rows):
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=x) for x in row] for row in rows],resize_keyboard=True)
-MENU=keyboard([NEW],[SAMPLE,HELP])
+MENU=keyboard([NEW],[ENTRY],[SAMPLE,HELP])
 CONFIRM=keyboard([MAKE],[EDIT,CANCEL])
 IMAGE_MENU=keyboard([ACCEPT_IMAGE],[ORIGINAL_IMAGE],[REPLACE_IMAGE,CANCEL])
 SCRIPT_MENU=keyboard(*[[x] for x in SCRIPT_BUTTONS],[CANCEL])
@@ -102,6 +103,7 @@ sessions: dict[int,Session]={}
 locks: dict[int,asyncio.Lock]={}
 workers=asyncio.Semaphore(2)
 dp=Dispatcher()
+pdf_tools: PdfTools | None = None
 
 async def ask(m,s):
     await m.answer(QUESTIONS[s.step],reply_markup=keyboard([KEEP],[CANCEL]) if s.step==6 else keyboard([CANCEL]))
@@ -141,6 +143,26 @@ async def handle(m):
     s=sessions.get(uid)
     if s and s.busy:
         await m.answer('Hujjatlar tayyorlanmoqda. Iltimos, kuting.');return
+    pdf_session = pdf_tools.sessions.get(uid) if pdf_tools else None
+    if text == ENTRY and pdf_tools:
+        pdf_session = pdf_tools.session_for(uid)
+        pdf_session.expire()
+        await pdf_tools.start(m, pdf_session)
+        return
+    if pdf_session and pdf_session.active:
+        if text in {'/start', BACK, NEW, SAMPLE, HELP, '/help', CANCEL, '/cancel'}:
+            pdf_session.active = False
+            if text == BACK:
+                await m.answer('Kerakli amalni tanlang.', reply_markup=MENU)
+                return
+        else:
+            pdf_session.expire()
+            try:
+                await pdf_tools.handle(m, pdf_session)
+            except Exception as exc:
+                logging.warning('PDF amali bajarilmadi (%s).', type(exc).__name__)
+                await m.answer('Amalni yakunlab bo‘lmadi. Qayta urinib ko‘ring.')
+            return
     if text in {'/start',CANCEL,'/cancel'}:
         sessions.pop(uid,None)
         await m.answer('Assalomu alaykum!\n\nSud xodimlari bilan o‘tkazilgan suhbat bayonnomalarini avtomatik tayyorlash tizimiga xush kelibsiz.\n\nBayonnoma tayyorlash uchun quyidagi tugmani bosing.',reply_markup=MENU);return
@@ -235,9 +257,15 @@ async def route(m: Message):
     if not m.from_user:return
     uid=m.from_user.id
     lock=locks.setdefault(uid,asyncio.Lock())
-    if lock.locked():
+    file_session = pdf_tools.sessions.get(uid) if pdf_tools else None
+    queued_upload = bool(file_session and file_session.active and m.document)
+    if lock.locked() and not queued_upload:
         await m.answer('Oldingi so‘rov bajarilmoqda. Iltimos, kuting.');return
+    upload_mode = file_session.mode if queued_upload else None
     async with lock:
+        if queued_upload and (not file_session.active or file_session.mode != upload_mode):
+            await m.answer('Faylni qabul qilish bo‘limi o‘zgardi. Amalni tanlab, faylni qayta yuboring.')
+            return
         await handle(m)
 
 @dp.callback_query(F.data.startswith('doc:'))
@@ -283,29 +311,68 @@ async def document_action(q: CallbackQuery):
             item.busy=False
             purge_documents()
 
+@dp.callback_query(F.data.startswith('add:'))
+async def pdf_result_action(q: CallbackQuery):
+    uid = q.from_user.id
+    if not pdf_tools or not isinstance(q.message, Message) or q.message.chat.type != ChatType.PRIVATE:
+        await q.answer('Botdan shaxsiy chatda foydalaning.', show_alert=True)
+        return
+    if ALLOWED_USER_IDS and uid not in ALLOWED_USER_IDS:
+        await q.answer('Ruxsat berilmagan.', show_alert=True)
+        return
+    lock = locks.setdefault(uid, asyncio.Lock())
+    if lock.locked():
+        await q.answer('Oldingi so‘rov bajarilmoqda. Iltimos, kuting.')
+        return
+    async with lock:
+        session = pdf_tools.session_for(uid)
+        session.expire()
+        try:
+            await pdf_tools.add_to_result(q, session)
+        except Exception as exc:
+            logging.warning('Tayyor PDFni tanlab bo‘lmadi (%s).', type(exc).__name__)
+            await q.message.answer('Tayyor PDFni tanlab bo‘lmadi. Qayta urinib ko‘ring.')
+
 async def expire_sessions():
     while True:
         await asyncio.sleep(30)
         now=time.monotonic()
         purge_documents(now)
+        if pdf_tools:
+            pdf_tools.purge(locks)
         for uid,s in list(sessions.items()):
             if not s.busy and now-s.touched>SESSION_SECONDS and not locks.get(uid,asyncio.Lock()).locked():
                 sessions.pop(uid,None)
         for uid,lock in list(locks.items()):
-            if uid not in sessions and not lock.locked(): locks.pop(uid,None)
+            has_pdf_session = pdf_tools is not None and uid in pdf_tools.sessions
+            if uid not in sessions and not has_pdf_session and not lock.locked():
+                locks.pop(uid, None)
 
 async def main():
     if not BOT_TOKEN: raise SystemExit('BOT_TOKEN topilmadi. .env yoki Railway Variables orqali kiriting.')
     if not TEMPLATE.is_file(): raise SystemExit('Word shabloni topilmadi.')
-    cleanup=asyncio.create_task(expire_sessions())
-    try:
-        async with Bot(BOT_TOKEN) as bot:
-            await bot.delete_webhook(drop_pending_updates=True)
-            await dp.start_polling(bot)
-    finally:
-        cleanup.cancel();sessions.clear();saved_documents.clear()
-        try: await cleanup
-        except asyncio.CancelledError: pass
+    global pdf_tools
+    with TemporaryDirectory(prefix='word-pdf-') as directory:
+        pdf_tools = PdfTools(
+            Path(directory), positive_env('MAX_FILE_MIB', 19, 19) * MIB,
+            positive_env('FILE_TTL_SECONDS', 3600),
+            positive_env('CONVERSION_TIMEOUT_SECONDS', 90), workers, SOFFICE,
+        )
+        cleanup = asyncio.create_task(expire_sessions())
+        try:
+            async with Bot(BOT_TOKEN) as bot:
+                await bot.delete_webhook(drop_pending_updates=True)
+                print('Bayonnoma va Word/PDF bo‘limlari ishga tayyor.', flush=True)
+                await dp.start_polling(bot)
+        finally:
+            cleanup.cancel()
+            sessions.clear()
+            saved_documents.clear()
+            try:
+                await cleanup
+            except asyncio.CancelledError:
+                pass
+            pdf_tools = None
 
 if __name__=='__main__':
     logging.basicConfig(level=logging.WARNING)

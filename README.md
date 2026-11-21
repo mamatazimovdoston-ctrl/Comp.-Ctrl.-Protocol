@@ -107,3 +107,14 @@ Word va PDF yuborilgandan keyingi xabarda uchta inline tugma bor: **Kirillga o�
 Yakunlangan bayonnomaning maydonlari va tanlangan PNG rasmi server RAM xotirasida tayyorlangandan boshlab **30 daqiqa** saqlanadi. Faol to‘ldirish sessiyasi yakunda tozalanadi, ammo ushbu alohida qayta tayyorlash keshi saqlanadi. Bir foydalanuvchining ko‘pi bilan oxirgi **5 ta** bayonnomasi saqlanadi; oltinchisi eng eskisini tozalaydi. Muddati tugagan ma’lumot 30 soniyalik tozalovchi tomonidan chiqariladi, tugma esa aniq muddat tugashi bilanoq ishlamaydi. Ishlayotgan qayta tayyorlash tugagach muddati o‘tgan kesh darhol tozalanadi. Bot restart/deploy qilinsa kesh ham yo‘qoladi.
 
 **Saqlangan ma’lumotni o‘chirish** tugmasi shu bayonnomaning serverdagi maydonlari va rasmini olib tashlaydi. Telegram chatidagi allaqachon yuborilgan fayllarni o‘chirmaydi. Yangi bayonnoma boshlash avvalgi tugmalarni boshqa ma’lumotga yo‘naltirmaydi. Tugma ID larida F.I.Sh. yoki token yo‘q; egasi, shaxsiy chat va kirish cheklovlari har bosishda tekshiriladi. Bir foydalanuvchining parallel bosishlari navbatdagi hujjatni aralashtirmaydi.
+
+## Word va PDF
+
+`/start` menyusidan **📎 Word va PDF** bo‘limini oching.
+
+- **Word → PDF** — bir yoki bir nechta `.doc` yoki `.docx` faylini hujjat sifatida yuboring. **Barchasini** barcha sahifalarni oladi. `2, 4-6, 9` hamma hujjatga qo‘llanadi. Har bir fayl uchun alohida tanlovni har qatorga bittadan, masalan `1: 2-4` va `2: barchasini` shaklida yozing.
+- **PDF birlashtirish** — kamida ikkita PDF yuboring va **Birlashtirish** tugmasini bosing.
+- Natija ostidagi **Shu PDFga fayl qo‘shish** tugmasi orqali o‘sha PDFni birinchi fayl qilib tanlang. Ilovalarni yuborib, **Birlashtirish**ni bosing. Saqlash muddati tugaganida tayyor PDF xabarini botga qayta yo‘naltiring.
+- **Asosiy menyu** tugmasi bayonnoma menyusiga qaytaradi. **Bekor qilish** yoki `/bekor` Word/PDF bo‘limidagi faol navbatni tozalaydi.
+
+`MAX_FILE_MIB` kiruvchi faylning hajm chegarasini belgilaydi (standart 19 MiB, 1–19 oralig‘i). `FILE_TTL_SECONDS` navbatdagi fayllar va Word → PDF natijalarini saqlash muddatini belgilaydi (standart 3600 soniya). `CONVERSION_TIMEOUT_SECONDS` bitta Word konvertatsiyasining vaqt chegarasini belgilaydi (standart 90 soniya).
