@@ -114,7 +114,7 @@ Yakunlangan bayonnomaning maydonlari va tanlangan PNG rasmi server RAM xotirasid
 
 - **Word → PDF** — bir yoki bir nechta `.doc` yoki `.docx` faylini hujjat sifatida yuboring. **Barchasini** barcha sahifalarni oladi. `2, 4-6, 9` hamma hujjatga qo‘llanadi. Har bir fayl uchun alohida tanlovni har qatorga bittadan, masalan `1: 2-4` va `2: barchasini` shaklida yozing.
 - **PDF birlashtirish** — kamida ikkita PDF yuboring va **Birlashtirish** tugmasini bosing.
-- Natija ostidagi **Shu PDFga fayl qo‘shish** tugmasi orqali o‘sha PDFni birinchi fayl qilib tanlang. Ilovalarni yuborib, **Birlashtirish**ni bosing. Saqlash muddati tugaganida tayyor PDF xabarini botga qayta yo‘naltiring.
+- Natija ostidagi **Shu PDFga fayl qo‘shish** tugmasi orqali o‘sha PDFni birinchi fayl qilib tanlang. Ilovalarni yuboring, keyin kerak bo‘lsa boshqa PDF ostidagi shu tugmani bosib, uning ilovalarini ham qo‘shing. Navbatda har bir guruh va umumiy sahifa soni ko‘rinadi. **Barchasini birlashtirish** har bir guruhni alohida PDF qilib yuboradi. Saqlash muddati tugaganida tayyor PDF xabarini botga qayta yo‘naltiring.
 - **Asosiy menyu** tugmasi bayonnoma menyusiga qaytaradi. **Bekor qilish** yoki `/bekor` Word/PDF bo‘limidagi faol navbatni tozalaydi.
 
 `MAX_FILE_MIB` kiruvchi faylning hajm chegarasini belgilaydi (standart 19 MiB, 1–19 oralig‘i). `FILE_TTL_SECONDS` navbatdagi fayllar va Word → PDF natijalarini saqlash muddatini belgilaydi (standart 3600 soniya). `CONVERSION_TIMEOUT_SECONDS` bitta Word konvertatsiyasining vaqt chegarasini belgilaydi (standart 90 soniya).

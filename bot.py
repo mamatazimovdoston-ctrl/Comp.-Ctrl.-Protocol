@@ -261,9 +261,9 @@ async def route(m: Message):
     queued_upload = bool(file_session and file_session.active and m.document)
     if lock.locked() and not queued_upload:
         await m.answer('Oldingi so‘rov bajarilmoqda. Iltimos, kuting.');return
-    upload_mode = file_session.mode if queued_upload else None
+    upload_target = (file_session.mode, file_session.selected_group) if queued_upload else None
     async with lock:
-        if queued_upload and (not file_session.active or file_session.mode != upload_mode):
+        if queued_upload and (not file_session.active or (file_session.mode, file_session.selected_group) != upload_target):
             await m.answer('Faylni qabul qilish bo‘limi o‘zgardi. Amalni tanlab, faylni qayta yuboring.')
             return
         await handle(m)

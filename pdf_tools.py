@@ -8,7 +8,6 @@ from pathlib import Path
 from time import monotonic
 from uuid import uuid4
 
-from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import (
     FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup,
@@ -27,6 +26,8 @@ HELP = "Yordam"
 ALL_BUTTON = "Barchasini"
 CLEAR = "Navbatni tozalash"
 MERGE = "Birlashtirish"
+MERGE_ALL = "Barchasini birlashtirish"
+ADD_MORE = "Yana fayl qo‘shish"
 CANCEL = "Bekor qilish"
 ADD = "Shu PDFga fayl qo‘shish"
 BUSY = "Ishlanmoqda…"
@@ -44,7 +45,7 @@ PDF birlashtirish
 Kamida ikkita PDFni kerakli tartibda yuboring va «Birlashtirish»ni bosing.
 
 Tayyor PDFga qo‘shish
-Natija ostida «Shu PDFga fayl qo‘shish»ni bosing. Masalan, Wordning 1-betidan olingan PDFga bir betli Ilova.pdf faylini yuborsangiz, «Birlashtirish» 2 betli PDF beradi. Avval Worddan olingan bet, keyin ilova keladi.
+Natija ostida «Shu PDFga fayl qo‘shish»ni bosing va ilovalarni yuboring. Boshqa natija ostidagi shu tugmani bossangiz, avvalgi guruhlar navbatda qoladi. «Barchasini birlashtirish» har bir asosiy PDF va uning ilovalarini alohida fayl qilib yuboradi.
 
 Faol navbatdan chiqish uchun «Bekor qilish»ni bosing yoki /bekor yozing."""
 LOG = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ def keyboard(*rows):
 MAIN_KEYS = keyboard((WORD, PDF), (HELP, BACK))
 WORD_KEYS = keyboard((ALL_BUTTON, CLEAR), (WORD, PDF), (HELP, CANCEL), (BACK,))
 PDF_KEYS = keyboard((MERGE, CANCEL), (WORD, PDF), (HELP, BACK))
+GROUP_KEYS = keyboard((ADD_MORE,), (MERGE_ALL,), (CANCEL, BACK))
 
 
 def positive_env(name, default, maximum=None):
@@ -83,6 +85,23 @@ class StoredFile:
 
 
 @dataclass
+class PdfGroup:
+    name: str
+    unique_id: str
+    expires: float
+    base: StoredFile | None = None
+    additions: list[StoredFile] = field(default_factory=list)
+
+    @property
+    def items(self):
+        return ([self.base] if self.base else []) + self.additions
+
+    def remove(self):
+        for item in self.items:
+            item.remove()
+
+
+@dataclass
 class Session:
     directory: Path
     mode: str = ""
@@ -90,12 +109,9 @@ class Session:
     words: dict[int, StoredFile] = field(default_factory=dict)
     next_word: int = 1
     pdfs: list[StoredFile] = field(default_factory=list)
-    additions: list[StoredFile] = field(default_factory=list)
     results: dict[str, StoredFile] = field(default_factory=dict)
-    base: StoredFile | None = None
-    waiting_for_base: bool = False
-    base_unique_id: str | None = None
-    base_result_id: str | None = None
+    groups: dict[str, PdfGroup] = field(default_factory=dict)
+    selected_group: str | None = None
 
     def clear_word(self):
         for item in self.words.values():
@@ -104,17 +120,15 @@ class Session:
         self.next_word = 1
 
     def clear_merge(self, mode):
-        items = self.additions if mode == "add" else self.pdfs
-        for item in items:
-            item.remove()
-        items.clear()
         if mode == "add":
-            if self.base:
-                self.base.remove()
-            self.base = None
-            self.waiting_for_base = False
-            self.base_unique_id = None
-            self.base_result_id = None
+            for group in self.groups.values():
+                group.remove()
+            self.groups.clear()
+            self.selected_group = None
+        else:
+            for item in self.pdfs:
+                item.remove()
+            self.pdfs.clear()
 
     def expire(self):
         now = monotonic()
@@ -123,15 +137,16 @@ class Session:
                 if item.expires <= now:
                     item.remove()
                     del queue[key]
-        for queue in (self.pdfs, self.additions):
-            for item in queue[:]:
-                if item.expires <= now:
-                    item.remove()
-                    queue.remove(item)
-        if self.base and self.base.expires <= now:
-            self.base.remove()
-            self.base = None
-            self.waiting_for_base = True
+        for item in self.pdfs[:]:
+            if item.expires <= now:
+                item.remove()
+                self.pdfs.remove(item)
+        for key, group in list(self.groups.items()):
+            if group.expires <= now:
+                group.remove()
+                del self.groups[key]
+                if self.selected_group == key:
+                    self.selected_group = None
         with suppress(OSError):
             self.directory.rmdir()
 
@@ -162,8 +177,13 @@ class PdfTools:
             await self.help(message)
         elif text == CLEAR:
             await self.clear_word(message, session)
+        elif text == MERGE_ALL or (text == MERGE and session.mode == "add"):
+            await self.merge_groups(message, session)
         elif text == MERGE:
             await self.merge(message, session)
+        elif text == ADD_MORE:
+            session.mode = "add"
+            await self.group_queue(message, session)
         elif text == CANCEL or command == "/bekor":
             await self.cancel(message, session)
         elif message.document:
@@ -212,15 +232,34 @@ class PdfTools:
                               CONTINUE if lines else ".doc yoki .docx yuboring.", WORD_KEYS)
 
     async def pdf_queue(self, message, session):
-        if session.mode == "add":
-            items = ([session.base] if session.base else []) + session.additions
-            tail = ("Avval tayyor PDFni Telegramdan qayta jo‘nating." if session.waiting_for_base
-                    else "Qo‘shmoqchi bo‘lgan PDF fayllaringizni yuboring yoki «Birlashtirish»ni bosing.")
+        lines = [f"{index}. {item.name} ({item.pages} sahifa)"
+                 for index, item in enumerate(session.pdfs, 1)]
+        await self.show_queue(message, "PDF navbati", lines or ["Navbat bo‘sh."],
+                              "Kamida ikkita PDF yuboring va «Birlashtirish»ni bosing.", PDF_KEYS)
+
+    async def group_queue(self, message, session, prefix=""):
+        lines = []
+        file_count = page_count = 0
+        for index, (key, group) in enumerate(session.groups.items(), 1):
+            current = " · tanlangan" if key == session.selected_group else ""
+            base = f"{group.base.pages} sahifa" if group.base else "qayta jo‘natish kerak"
+            lines.append(f"{index}. {group.name} · {base}{current}")
+            lines.extend(f"    + {item.name} · {item.pages} sahifa" for item in group.additions)
+            items = group.items
+            pages = sum(item.pages for item in items)
+            file_count += len(items)
+            page_count += pages
+            lines.append(f"    Guruh jami: {pages} sahifa")
+        group = session.groups.get(session.selected_group)
+        if group is None:
+            help_text = "PDF ostidagi «Shu PDFga fayl qo‘shish» tugmasini bosing."
+        elif group.base is None:
+            help_text = f"Avval «{group.name}» faylini Telegramdan qayta jo‘nating."
         else:
-            items = session.pdfs
-            tail = "Kamida ikkita PDF yuboring va «Birlashtirish»ni bosing."
-        lines = [f"{index}. {item.name} ({item.pages} sahifa)" for index, item in enumerate(items, 1)]
-        await self.show_queue(message, "PDF navbati", lines or ["Navbat bo‘sh."], tail, PDF_KEYS)
+            help_text = f"«{group.name}» uchun ilovalarni yuboring. Boshqa guruhga o‘tish uchun o‘sha PDF ostidagi tugmani bosing."
+        total = f"Jami: {len(session.groups)} guruh · {file_count} fayl · {page_count} sahifa"
+        await self.show_queue(message, "PDF birlashtirish navbati", lines or ["Navbat bo‘sh."],
+                              f"{prefix}{total}\n{help_text}", GROUP_KEYS)
 
     async def menu_word(self, message, session):
         session.mode = "word"
@@ -259,10 +298,13 @@ class PdfTools:
         if suffix not in allowed:
             await message.answer(f"«{name}» formati qo‘llab-quvvatlanmaydi. Qabul qilinadigan formatlar: {', '.join(allowed)}.")
             return
-        if mode == "add" and session.waiting_for_base and session.base_unique_id:
-            if document.file_unique_id != session.base_unique_id:
-                await message.answer("Avval tugmasini bosgan tayyor PDFni Telegramdan qayta jo‘nating.")
-                return
+        group = session.groups.get(session.selected_group) if mode == "add" else None
+        if mode == "add" and group is None:
+            await self.group_queue(message, session)
+            return
+        if group and group.base is None and document.file_unique_id != group.unique_id:
+            await message.answer(f"Avval «{group.name}» faylini Telegramdan qayta jo‘nating.")
+            return
         if document.file_size is not None and document.file_size > self.max_bytes:
             await message.answer(f"«{name}» fayli juda katta. Chegara: {self.max_bytes / MIB:g} MiB.")
             return
@@ -283,11 +325,14 @@ class PdfTools:
             if mode == "word":
                 session.words[session.next_word] = item
                 session.next_word += 1
-            elif mode == "add" and session.waiting_for_base:
-                session.base = item
-                session.waiting_for_base = False
+            elif group:
+                if group.base is None:
+                    group.base = item
+                else:
+                    group.additions.append(item)
+                group.expires = item.expires
             else:
-                (session.additions if mode == "add" else session.pdfs).append(item)
+                session.pdfs.append(item)
             accepted = True
         except DocumentError as error:
             await message.answer(f"«{name}». {error}")
@@ -300,6 +345,8 @@ class PdfTools:
                 item.remove()
         if mode == "word":
             await self.word_queue(message, session)
+        elif mode == "add":
+            await self.group_queue(message, session)
         else:
             await self.pdf_queue(message, session)
 
@@ -313,8 +360,11 @@ class PdfTools:
             yield chunk
 
     async def text(self, message, session):
+        if session.mode == "add":
+            await self.group_queue(message, session)
+            return
         if session.mode != "word":
-            keys = PDF_KEYS if session.mode in ("pdf", "add") else MAIN_KEYS
+            keys = PDF_KEYS if session.mode == "pdf" else MAIN_KEYS
             await message.answer("Menyudan amalni tanlang yoki fayl yuboring.", reply_markup=keys)
             return
         if not session.words:
@@ -379,55 +429,78 @@ class PdfTools:
         if not re.fullmatch(r"add:[a-f0-9]{32}", callback.data) or not message.document:
             await callback.answer("Tayyor PDF topilmadi.")
             return
-        result = session.results.get(callback.data[4:])
-        unique_id = message.document.file_unique_id
-        if session.base_result_id != callback.data:
-            session.clear_merge("add")
+        key = callback.data[4:]
         session.active = True
         session.mode = "add"
-        session.base_unique_id = unique_id
-        session.base_result_id = callback.data
-        if session.base is None and result:
-            session.base = self.stored(session, result.name, ".pdf")
+        session.selected_group = key
+        result = session.results.get(key)
+        group = session.groups.get(key)
+        if group is None:
+            group = PdfGroup(result.name if result else (message.document.file_name or "Tayyor PDF")[:120],
+                             message.document.file_unique_id, monotonic() + self.ttl)
+            session.groups[key] = group
+        if group.base is None and result:
+            base = self.stored(session, result.name, ".pdf")
             try:
-                os.link(result.path, session.base.path)
+                os.link(result.path, base.path)
             except OSError:
-                session.base = None
+                pass
             else:
-                session.base.pages = result.pages
-                session.base.expires = result.expires
-        session.waiting_for_base = session.base is None
+                base.pages = result.pages
+                group.base = base
         await callback.answer()
-        await self.pdf_queue(message, session)
+        await self.group_queue(message, session)
+
+    async def merge_groups(self, message, session):
+        ready = [(key, group) for key, group in session.groups.items() if group.base and group.additions]
+        if not ready:
+            await self.group_queue(message, session, "Birlashtirish uchun ilova yuboring.\n")
+            return
+        await message.answer(BUSY)
+        completed = pages = 0
+        for key, group in ready:
+            output = self.stored(session, f"{Path(group.name).stem}_ilovali.pdf", ".pdf")
+            if await self.send_merged(message, group.items, output, GROUP_KEYS):
+                completed += 1
+                pages += output.pages
+                group.remove()
+                del session.groups[key]
+                if session.selected_group == key:
+                    session.selected_group = None
+        summary = f"{completed} ta PDF tayyor. Jami {pages} sahifa."
+        if session.groups:
+            await self.group_queue(message, session, summary + "\n")
+        else:
+            session.mode = ""
+            await message.answer(summary, reply_markup=MAIN_KEYS)
 
     async def merge(self, message, session):
-        mode = session.mode
-        if mode not in ("add", "pdf"):
+        if session.mode != "pdf":
             await message.answer("Menyudan «PDF birlashtirish» amalini tanlang.")
             return
-        if mode == "add" and not session.base:
-            await self.pdf_queue(message, session)
-            return
-        items = [session.base, *session.additions] if mode == "add" else session.pdfs
-        if len(items) < 2:
+        if len(session.pdfs) < 2:
             await message.answer("Birlashtirish uchun yana PDF fayl yuboring.", reply_markup=PDF_KEYS)
             return
+        await message.answer(BUSY)
         result = self.stored(session, "Birlashtirilgan.pdf", ".pdf")
+        if await self.send_merged(message, session.pdfs, result, PDF_KEYS):
+            session.clear_merge("pdf")
+            session.mode = ""
+            await message.answer("Birlashtirish tugadi.", reply_markup=MAIN_KEYS)
+
+    async def send_merged(self, message, items, result, keys):
         try:
-            await message.answer(BUSY)
             async with self.workers:
                 result.pages = await asyncio.to_thread(merge_pdfs, [item.path for item in items], result.path)
             await self.send_pdf(message, result)
+            return True
         except DocumentError as error:
-            await message.answer(str(error), reply_markup=PDF_KEYS)
+            await message.answer(f"«{result.name}». {error}", reply_markup=keys)
         except TelegramAPIError:
-            await message.answer("PDFni Telegramga yuborib bo‘lmadi. Fayllar navbatda.", reply_markup=PDF_KEYS)
+            await message.answer(f"«{result.name}» yuborilmadi. Fayllar navbatda.", reply_markup=keys)
         except Exception as error:
             LOG.warning("PDF amali bajarilmadi (%s).", type(error).__name__)
-            await message.answer("PDFlarni birlashtirib bo‘lmadi. Fayllar navbatda.", reply_markup=PDF_KEYS)
-        else:
-            session.clear_merge(mode)
-            session.mode = ""
-            await message.answer("Birlashtirish tugadi.", reply_markup=MAIN_KEYS)
+            await message.answer(f"«{result.name}» tayyorlanmadi. Fayllar navbatda.", reply_markup=keys)
         finally:
             result.remove()
+        return False

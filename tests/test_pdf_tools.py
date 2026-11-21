@@ -8,12 +8,13 @@ from tempfile import TemporaryDirectory
 from time import monotonic
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.client.session.base import BaseSession
 from aiogram.types import Update
 from pypdf import PdfReader, PdfWriter
 
 import bot as protocol
-from pdf_tools import ADD, ALL_BUTTON, BACK, CANCEL, CLEAR, ENTRY, HELP, MERGE, PDF, WORD, PdfTools
+from pdf_tools import ADD, ADD_MORE, ALL_BUTTON, BACK, CANCEL, CLEAR, ENTRY, HELP, MERGE, MERGE_ALL, PDF, WORD, PdfTools
 
 
 def make_word(root, name, count, suffix):
@@ -54,6 +55,7 @@ class TelegramStub(BaseSession):
         self.messages = []
         self.callbacks = []
         self.delay = 0
+        self.reject_filename = None
 
     async def close(self):
         pass
@@ -67,6 +69,8 @@ class TelegramStub(BaseSession):
         if name == "sendMessage":
             self.messages.append(method)
         elif name == "sendDocument":
+            if method.document.filename == self.reject_filename:
+                raise TelegramBadRequest(method=method, message="Sinovdagi vaqtinchalik xato")
             self.sent.append((method, Path(method.document.path).read_bytes()))
             await asyncio.sleep(self.delay)
         elif name == "answerCallbackQuery":
@@ -215,6 +219,36 @@ class BotIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pages[1].rotation, 90)
         self.assertEqual(tuple(pages[1].mediabox.upper_right), (720, 905))
 
+    async def test_merge_all_groups_separately_and_retry(self):
+        await self.queue_word(self.a, self.b, self.a)
+        await self.update("1")
+        await self.update(callback=1)
+        await self.update(path=self.x)
+        await self.update(callback=2)
+        await self.update(path=self.x)
+        await self.update(callback=3)
+        await self.update(path=self.y)
+        await self.update(callback=1)
+        await self.update(ADD_MORE)
+        await self.update(path=self.x)
+        self.assertIn("Jami: 3 guruh · 7 fayl · 8 sahifa", self.api.messages[-1].text)
+        self.assertIn("Guruh jami: 2 sahifa", self.api.messages[-1].text)
+
+        self.api.reject_filename = "hisobot_ilovali.pdf"
+        await self.update(MERGE_ALL)
+        self.assertEqual(len(self.api.sent), 5)
+        self.verify(["BAYONNOMA PAGE 1", "ILOVA PAGE 1", "ILOVA PAGE 1"], -2)
+        self.verify(["BAYONNOMA PAGE 1", "IZOH PAGE 1", "IZOH PAGE 2"])
+        self.assertIn("2 ta PDF tayyor. Jami 6 sahifa.", self.api.messages[-1].text)
+        self.assertEqual(len(self.app.sessions[7].groups), 1)
+
+        self.api.reject_filename = None
+        await self.update(MERGE_ALL)
+        self.assertEqual(len(self.api.sent), 6)
+        self.verify(["HISOBOT PAGE 1", "ILOVA PAGE 1"])
+        self.assertEqual(self.api.sent[-1][0].document.filename, "hisobot_ilovali.pdf")
+        self.assertFalse(self.app.sessions[7].groups)
+
     async def test_standalone_invalid_file_and_isolation(self):
         await self.queue_word(self.a)
         await self.update(PDF)
@@ -267,7 +301,7 @@ class BotIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.path.exists())
         self.assertIn("qayta jo‘nating", self.api.messages[-1].text)
         await self.update(path=self.x)
-        self.assertIsNone(session.base)
+        self.assertIsNone(next(iter(session.groups.values())).base)
         await self.update(path=saved, identity="output1")
         await self.update(path=self.x)
         await self.update(MERGE)
