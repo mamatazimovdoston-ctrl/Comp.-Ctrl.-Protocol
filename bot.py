@@ -311,7 +311,7 @@ async def document_action(q: CallbackQuery):
             item.busy=False
             purge_documents()
 
-@dp.callback_query(F.data.startswith('add:'))
+@dp.callback_query(F.data.startswith(('add:', 'pg:')))
 async def pdf_result_action(q: CallbackQuery):
     uid = q.from_user.id
     if not pdf_tools or not isinstance(q.message, Message) or q.message.chat.type != ChatType.PRIVATE:
@@ -328,7 +328,10 @@ async def pdf_result_action(q: CallbackQuery):
         session = pdf_tools.session_for(uid)
         session.expire()
         try:
-            await pdf_tools.add_to_result(q, session)
+            if q.data.startswith('add:'):
+                await pdf_tools.add_to_result(q, session)
+            else:
+                await pdf_tools.group_action(q, session)
         except Exception as exc:
             logging.warning('Tayyor PDFni tanlab bo‘lmadi (%s).', type(exc).__name__)
             await q.message.answer('Tayyor PDFni tanlab bo‘lmadi. Qayta urinib ko‘ring.')

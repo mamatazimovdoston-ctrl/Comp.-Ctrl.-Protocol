@@ -132,7 +132,11 @@ class BotIntegration(unittest.IsolatedAsyncioTestCase):
             self.api.files[file_id] = data
             message["document"] = {"file_id": file_id, "file_unique_id": identity or file_id,
                                    "file_name": filename or path.name, "file_size": len(data)}
-        if callback:
+        if isinstance(callback, str):
+            message["from"] = {"id": 100, "is_bot": True, "first_name": "Bot"}
+            payload = {"callback_query": {"id": str(self.seq), "chat_instance": "test",
+                                          "from": person, "message": message, "data": callback}}
+        elif callback:
             method, data = self.api.sent[callback - 1]
             button = method.reply_markup.inline_keyboard[0][0]
             self.assertEqual(button.text, ADD)
@@ -232,7 +236,8 @@ class BotIntegration(unittest.IsolatedAsyncioTestCase):
         await self.update(ADD_MORE)
         await self.update(path=self.x)
         self.assertIn("Jami: 3 guruh · 7 fayl · 8 sahifa", self.api.messages[-1].text)
-        self.assertIn("Guruh jami: 2 sahifa", self.api.messages[-1].text)
+        buttons = self.api.messages[-1].reply_markup.inline_keyboard
+        self.assertEqual(buttons[1][0].text, "2. hisobot.pdf · 2 sahifa")
 
         self.api.reject_filename = "hisobot_ilovali.pdf"
         await self.update(MERGE_ALL)
@@ -248,6 +253,38 @@ class BotIntegration(unittest.IsolatedAsyncioTestCase):
         self.verify(["HISOBOT PAGE 1", "ILOVA PAGE 1"])
         self.assertEqual(self.api.sent[-1][0].document.filename, "hisobot_ilovali.pdf")
         self.assertFalse(self.app.sessions[7].groups)
+
+    async def test_edit_second_group_and_remove_only_one_duplicate(self):
+        await self.queue_word(self.a, self.b, self.a)
+        await self.update("1")
+        for result in (1, 2, 3):
+            await self.update(callback=result)
+            await self.update(path=self.x)
+            if result == 2:
+                await self.update(path=self.x)
+
+        overview = self.api.messages[-1].reply_markup.inline_keyboard
+        self.assertEqual(overview[1][0].text, "2. hisobot.pdf · 3 sahifa")
+        await self.update(callback=overview[1][0].callback_data)
+        detail = self.api.messages[-1]
+        self.assertIn("2-guruh · hisobot.pdf", detail.text)
+        first, duplicate = detail.reply_markup.inline_keyboard[:2]
+        self.assertNotEqual(first[0].callback_data, duplicate[0].callback_data)
+        await self.update(callback=duplicate[0].callback_data)
+        self.assertIn("Guruh jami: 2 sahifa", self.api.messages[-1].text)
+        self.assertIn("3 guruh · 6 fayl · 6 sahifa", self.api.messages[-1].text)
+        await self.update(callback=duplicate[0].callback_data)
+        self.assertIn("navbatda yo‘q", self.api.callbacks[-1])
+        rows = self.api.messages[-1].reply_markup.inline_keyboard
+        more = next(row[0] for row in rows if row[0].text == ADD_MORE)
+        await self.update(callback=more.callback_data)
+        await self.update(path=self.y)
+        overview = self.api.messages[-1].reply_markup.inline_keyboard
+        merge = next(row[0] for row in overview if row[0].text == MERGE_ALL)
+        await self.update(callback=merge.callback_data)
+        self.verify(["BAYONNOMA PAGE 1", "ILOVA PAGE 1"], -3)
+        self.verify(["HISOBOT PAGE 1", "ILOVA PAGE 1", "IZOH PAGE 1", "IZOH PAGE 2"], -2)
+        self.verify(["BAYONNOMA PAGE 1", "ILOVA PAGE 1"])
 
     async def test_standalone_invalid_file_and_isolation(self):
         await self.queue_word(self.a)

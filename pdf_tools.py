@@ -237,29 +237,120 @@ class PdfTools:
         await self.show_queue(message, "PDF navbati", lines or ["Navbat bo‘sh."],
                               "Kamida ikkita PDF yuboring va «Birlashtirish»ni bosing.", PDF_KEYS)
 
-    async def group_queue(self, message, session, prefix=""):
-        lines = []
-        file_count = page_count = 0
-        for index, (key, group) in enumerate(session.groups.items(), 1):
-            current = " · tanlangan" if key == session.selected_group else ""
-            base = f"{group.base.pages} sahifa" if group.base else "qayta jo‘natish kerak"
-            lines.append(f"{index}. {group.name} · {base}{current}")
-            lines.extend(f"    + {item.name} · {item.pages} sahifa" for item in group.additions)
-            items = group.items
-            pages = sum(item.pages for item in items)
-            file_count += len(items)
-            page_count += pages
-            lines.append(f"    Guruh jami: {pages} sahifa")
+    @staticmethod
+    def group_totals(session):
+        files = [item for group in session.groups.values() for item in group.items]
+        return f"Jami: {len(session.groups)} guruh · {len(files)} fayl · {sum(item.pages for item in files)} sahifa"
+
+    @staticmethod
+    def page_buttons(page, last, data):
+        buttons = []
+        if page > 0:
+            buttons.append(InlineKeyboardButton(text="‹ Oldingi", callback_data=data(page - 1)))
+        if page < last:
+            buttons.append(InlineKeyboardButton(text="Keyingi ›", callback_data=data(page + 1)))
+        return [buttons] if buttons else []
+
+    async def group_queue(self, message, session, prefix="", page=0):
+        groups = list(session.groups.items())
+        last = max(0, (len(groups) - 1) // 10)
+        page = min(page, last)
+        rows = []
+        for index, (key, group) in enumerate(groups[page * 10:(page + 1) * 10], page * 10 + 1):
+            pages = sum(item.pages for item in group.items)
+            rows.append([InlineKeyboardButton(
+                text=f"{index}. {group.name[:32]} · {pages} sahifa",
+                callback_data=f"pg:open:{key}:0",
+            )])
+        rows.extend(self.page_buttons(page, last, lambda number: f"pg:list:{number}"))
         group = session.groups.get(session.selected_group)
         if group is None:
-            help_text = "PDF ostidagi «Shu PDFga fayl qo‘shish» tugmasini bosing."
+            help_text = "Guruhni tanlang yoki PDF ostidagi «Shu PDFga fayl qo‘shish» tugmasini bosing."
         elif group.base is None:
             help_text = f"Avval «{group.name}» faylini Telegramdan qayta jo‘nating."
         else:
-            help_text = f"«{group.name}» uchun ilovalarni yuboring. Boshqa guruhga o‘tish uchun o‘sha PDF ostidagi tugmani bosing."
-        total = f"Jami: {len(session.groups)} guruh · {file_count} fayl · {page_count} sahifa"
-        await self.show_queue(message, "PDF birlashtirish navbati", lines or ["Navbat bo‘sh."],
-                              f"{prefix}{total}\n{help_text}", GROUP_KEYS)
+            help_text = f"«{group.name}» tanlangan. Ilova yuboring yoki boshqa guruhni tanlang."
+        rows.extend([
+            [InlineKeyboardButton(text=MERGE_ALL, callback_data="pg:merge")],
+            [InlineKeyboardButton(text=CANCEL, callback_data="pg:cancel"),
+             InlineKeyboardButton(text="Word va PDF menyusi", callback_data="pg:menu")],
+        ])
+        await message.answer(
+            f"PDF birlashtirish navbati\n\n{prefix}{self.group_totals(session)}\n{help_text}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    async def group_detail(self, message, session, key, page=0, prefix=""):
+        group = session.groups[key]
+        number = list(session.groups).index(key) + 1
+        last = max(0, (len(group.additions) - 1) // 8)
+        page = min(page, last)
+        base = f"{group.base.pages} sahifa" if group.base else "Telegramdan qayta jo‘natish kerak"
+        lines = [f"{number}-guruh · {group.name}", f"Asosiy PDF · {base}"]
+        rows = []
+        for index, item in enumerate(group.additions[page * 8:(page + 1) * 8], page * 8 + 1):
+            lines.append(f"{index}. {item.name} · {item.pages} sahifa")
+            rows.append([InlineKeyboardButton(
+                text=f"{index}. O‘chirish · {item.name[:30]}", callback_data=f"pg:remove:{item.path.stem}",
+            )])
+        rows.extend(self.page_buttons(page, last, lambda number: f"pg:open:{key}:{number}"))
+        rows.extend([
+            [InlineKeyboardButton(text=ADD_MORE, callback_data=f"pg:more:{key}")],
+            [InlineKeyboardButton(text="Navbatga qaytish", callback_data="pg:list:0")],
+        ])
+        lines.extend([f"Guruh jami: {sum(item.pages for item in group.items)} sahifa", self.group_totals(session)])
+        await message.answer(prefix + "\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+    async def group_action(self, callback, session):
+        message = callback.message
+        parts = callback.data.split(":")
+        action = parts[1]
+        if action == "list" and len(parts) == 3 and parts[2].isascii() and parts[2].isdigit():
+            session.active = True
+            session.mode = "add"
+            await callback.answer()
+            await self.group_queue(message, session, page=int(parts[2]))
+            return
+        if action in ("merge", "cancel", "menu") and len(parts) == 2:
+            session.active = True
+            session.mode = "add"
+            await callback.answer()
+            if action == "merge":
+                await self.merge_groups(message, session)
+            elif action == "cancel":
+                await self.cancel(message, session)
+            else:
+                await self.start(message, session)
+            return
+        if action in ("open", "more") and len(parts) in (3, 4) and parts[2] in session.groups:
+            key = parts[2]
+            session.active = True
+            session.mode = "add"
+            session.selected_group = key
+            await callback.answer()
+            if action == "more":
+                group = session.groups[key]
+                prefix = (f"«{group.name}» uchun ilovalarni yuboring.\n"
+                          if group.base else f"Avval «{group.name}» faylini Telegramdan qayta jo‘nating.\n")
+                await self.group_detail(message, session, key, prefix=prefix)
+            else:
+                page = int(parts[3]) if len(parts) == 4 and parts[3].isascii() and parts[3].isdigit() else 0
+                await self.group_detail(message, session, key, page=page)
+            return
+        if action == "remove" and len(parts) == 3:
+            for key, group in session.groups.items():
+                for index, item in enumerate(group.additions):
+                    if item.path.stem == parts[2]:
+                        item.remove()
+                        del group.additions[index]
+                        session.active = True
+                        session.mode = "add"
+                        session.selected_group = key
+                        await callback.answer("Ilova navbatdan o‘chirildi.")
+                        await self.group_detail(message, session, key, page=index // 8,
+                                                prefix=f"«{item.name}» navbatdan o‘chirildi.\n\n")
+                        return
+        await callback.answer("Bu guruh yoki ilova navbatda yo‘q.", show_alert=True)
 
     async def menu_word(self, message, session):
         session.mode = "word"
